@@ -1,7 +1,7 @@
 # kubernetes-public
 This is a guide to provision a Highly Available Kubernetes Cluster (K8s) on v1.21
 
-<h1>This is my Personal Homelab Kubernetes Cluster</h1>
+<h1>This is my Personal Homelab Kubernetes Cluster, and I've taken around 40 Bookmarked webpages and condensed them into one guide.</h1>
 
 This homelab uses a Multi-Master stacked topology. 
 
