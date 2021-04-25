@@ -18,6 +18,8 @@ This homelab uses a Multi-Master stacked topology.
      These Values are just what work best in *MY* Homelab, and the resources I have available, you can modify them accordingly, just make sure they fall within 
      [Kubernetes minimum Requirements](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin)
 
+     The reason I say 9-13 Servers, is the extra 4 are Storage nodes. These nodes are setup with 100GiB each because I planned to use Longhorn as taught in TechnoTim's Guides, so you can do this without if you don't plan on having storage nodes. 
+
   2. Setup an additional user on each Ubuntu Server with Sudo privelages (so that the machine can be managed by ansible):
 
      `sudo adduser serveradmin`
