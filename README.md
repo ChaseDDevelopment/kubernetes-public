@@ -52,7 +52,7 @@ This homelab uses a Multi-Master stacked topology.
 
      `ansible-galaxy install gantsign.oh-my-zsh`
 
-  5. Provision the 13 Servers using ansible using TechnoTim's Ansible Files. the Host file `kuber` has all my kubernetes hosts. 
+  5. Provision the 13 Servers using ansible using TechnoTim's Ansible Files. the Host file `kuber` has all my kubernetes hosts. [TechnoTim Ansible](https://github.com/techno-tim/ansible-homelab)
 
      ```
      ansible-playbook ~/ansible/playbooks/apt.yml --user serveradmin --ask-become-pass -i ~/ansible/inventory/kuber
