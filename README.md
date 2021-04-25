@@ -1,5 +1,5 @@
 # kubernetes-public
-This is a guide to provision a Highly Available Kubernetes Cluster (K8s)
+This is a guide to provision a Highly Available Kubernetes Cluster (K8s) on v1.21
 
 <h1>This is my Personal Homelab Kubernetes Cluster</h1>
 
@@ -247,3 +247,10 @@ This homelab uses a Multi-Master stacked topology.
      `sudo cat ~/.kube/config`
 
  13. You should now have a fully working kubernetes cluster, things to consider are downloading `metallb`, `rancher`, and `longhorn` to make your cluster a little more user friendly.  These Guides can be found from [TechnoTim](https://techno-tim.github.io/)
+
+ 14. If you are going to install Rancher on this cluster, I noticed that the schedular and conroller manager said "unhealthy". They seem to work as normal, but a fix for this is as follows:
+     1. `sudo nano /etc/kubernetes/manifest/kube-scheduler.yaml` and clear the line (spec->containers->command) containing this phrase: `- --port=0`
+     2. `sudo nano /etc/kubernetes/manifest/kube-controller.yaml` and clear the line (spec->containers->command) containing this phrase: `- --port=0`
+     3. `sudo systemctl restart kubelet.service`
+
+     Do this on all *THREE* Control Planes, and it should resolve the issue. 
