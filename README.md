@@ -3,7 +3,9 @@ This is a guide to provision a Highly Available Kubernetes Cluster (K8s) on v1.2
 
 <h1>This is my Personal Homelab Kubernetes Cluster, and I've taken around 40 Bookmarked webpages and condensed them into one guide.</h1>
 
-This homelab uses a Multi-Master stacked topology. 
+This Kubernetes cluster uses a Multi-Master stacked topology. I stuggled for a few days to find all the steps that would work for one installation on bare metal, and had to take some pieces from several places to get this to work the way it does. This cluster will be using [Calico](https://www.projectcalico.org/) as it's Container Network Interface. 
+
+Please don't hesitate to raise any issues with the guide, I'll update it, and try to help where I can!
 
 
 <h2> Installation Guide </h2>
@@ -18,7 +20,7 @@ This homelab uses a Multi-Master stacked topology.
      These Values are just what work best in *MY* Homelab, and the resources I have available, you can modify them accordingly, just make sure they fall within 
      [Kubernetes minimum Requirements](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin)
 
-     The reason I say 9-13 Servers, is the extra 4 are Storage nodes. These nodes are setup with 100GiB each because I planned to use Longhorn as taught in TechnoTim's Guides, so you can do this without if you don't plan on having storage nodes. 
+     The reason I say 9-13 Servers, is the extra 4 are Storage nodes. These nodes are setup with 100GiB each because I planned to use Longhorn as taught in TechnoTim's Guides, so you can do this without the additional storage nodes, or use them as more worker nodes if you don't plan on using storage nodes. 
 
   2. Setup an additional user on each Ubuntu Server with Sudo privelages (so that the machine can be managed by ansible):
 
@@ -74,7 +76,7 @@ This homelab uses a Multi-Master stacked topology.
        
         `sudo apt install keepalived haproxy`
      
-     2. Access `keepalived` config at `/etc/keepalived/keepalived.conf` on both nodes. The API server port by default is `6443`
+     2. Access `keepalived` config at `/etc/keepalived/keepalived.conf` on both nodes. The API server port by default is `6443` Please check the notes below for information on the values.
      
         ```
         global_defs {
@@ -88,9 +90,9 @@ This homelab uses a Multi-Master stacked topology.
           rise 2
         }
         
-        vrrp_instance VI_1 {
+        vrrp_instance ${VI_#} {
             state ${STATE} # value: MASTER
-            interface ${INTERFACE} # value: ens18 (this is the physical network interface on the Ubuntu Server, change accordingly)
+            interface ${INTERFACE} # value: ens18 
             virtual_router_id ${ROUTER_ID} #value: 51
             priority ${PRIORITY} # value: 101
             authentication {
@@ -98,31 +100,42 @@ This homelab uses a Multi-Master stacked topology.
                 auth_pass ${AUTH_PASS} # value: {RandomPassword}
             }
             virtual_ipaddress {
-                ${APISERVER_VIP} # value: 192.168.x.x (This is dependent on the local network, and available address'. Make sure this Address is not within the DHCP servers address' that it will assign ) 
+                ${APISERVER_VIP} # value: 192.168.x.x 
             }
             track_script {
                 check_apiserver
             }
         }
         ```
-   
-        Add the script that `keepalived` uses at `/etc/keepalived/check_apiserver.sh` on both nodes. the `APISERVER_VIP` is the Virtual IP assigned to `keepalived` above
-   
-        ```
-        #!/bin/sh
+        <hr>
         
-        errorExit() {
-            echo "*** $*" 1>&2
-            exit 1
-        }
+        * ${VI_#} - This is the instance number. Change it on both load balancers. for simplicity I made mine `VI_1` on the "Master" and `VI_2` on the "Backup".
+        * ${STATE} - This value Will be `MASTER` on the first loadbalancer and `BACKUP` on the second loadbalancer.
+        * ${INTERFACE} - This is the physical network interface on the Ubuntu Server, change accordingly. Mine is `ens18`
+        * ${ROUTER_ID} - This is a random value, just make sure the value on the "Master" loadbalancer is lower. e.g `51` and `52` on the "Backup".
+        * ${PRIORITY} - This is a random value, just make the value on the "Master" load balancer is lower. e.g `101` and `200` on the "Backup".
+        * ${AUTH_PASS} - This is a random password, use any generator and avoid special characters. This will be the same on both loadbalancers.
+        * ${APISERVER_VIP} - This is the virtual IP address that both load balancers will be sharing. Change it based on your local network and available address'. Make sure this address is not within the DHCP servers range. 
         
-        curl --silent --max-time 2 --insecure https://localhost:${APISERVER_DEST_PORT}/ -o /dev/null || errorExit "Error GET https://localhost:${APISERVER_DEST_PORT}/"
-        if ip addr | grep -q ${APISERVER_VIP}; then
-            curl --silent --max-time 2 --insecure https://${APISERVER_VIP}:${APISERVER_DEST_PORT}/ -o /dev/null || errorExit "Error GET https://${APISERVER_VIP}:${APISERVER_DEST_PORT}/"
-        fi
-        ```
+      3. Add the script that `keepalived` uses at `/etc/keepalived/check_apiserver.sh` on both nodes. the `APISERVER_VIP` is the Virtual IP assigned to `keepalived` above and `APISERVER_DEST_PORT` is `6443`. (Thats the default API Server port)
+   
+          ```
+          #!/bin/sh
+        
+          errorExit() {
+              echo "*** $*" 1>&2
+              exit 1
+          }
+        
+          curl --silent --max-time 2 --insecure https://localhost:${APISERVER_DEST_PORT}/ -o /dev/null || errorExit "Error GET https://localhost:${APISERVER_DEST_PORT}/"
+          if ip addr | grep -q ${APISERVER_VIP}; then
+              curl --silent --max-time 2 --insecure https://${APISERVER_VIP}:${APISERVER_DEST_PORT}/ -o /dev/null || errorExit "Error GET https://${APISERVER_VIP}:${APISERVER_DEST_PORT}/"
+          fi
+          ```
+        
+       
 
-     3. Modify the `HAProxy` configuration file located at `/etc/haproxy/haproxy.cfg` on both nodes
+     4. Modify the `HAProxy` configuration file located at `/etc/haproxy/haproxy.cfg` on both nodes
 
         ```
         # /etc/haproxy/haproxy.cfg
@@ -173,18 +186,26 @@ This homelab uses a Multi-Master stacked topology.
             mode tcp
             option ssl-hello-chk
             balance     roundrobin
-                server ${HOST1_ID} ${HOST1_ADDRESS}:${APISERVER_SRC_PORT} check fall 3 rise 2 # for me ${HOST1_ID} is kube_control_plane1. Add all your control Planes here. 
+                server ${HOST1_ID} ${HOST1_ADDRESS}:${APISERVER_SRC_PORT} check fall 3 rise 2 # for me ${HOST1_ID} is kube_control_plane1. Add all your control Planes here.
+                server ${HOST2_ID} ${HOST2_ADDRESS}:${APISERVER_SRC_PORT} check fall 3 rise 2
+                server ${HOST3_ID} ${HOST3_ADDRESS}:${APISERVER_SRC_PORT} check fall 3 rise 2
                 # [...]
         ```
+        <hr>
+        
+        * ${APISERVER_DEST_PORT} - By default the API Server's port is `6443`, so thats what I am using here.
+        * ${HOST1_ID} - This is what the hostname is on the server, I called mine `kube-control-plane1`.
+        * ${HOST1_ADDRESS} - This is the IP Address for the first control plane.
+        * ${APISERVER_SRC_PORT} - This is the port for the API Server. (`6443`)
 
-     4. Enable `Haproxy` & `keepalived` in `systemd` on both nodes
+     5. Enable `Haproxy` & `keepalived` in `systemd` on both nodes
         
         ```
         sudo systemctl enable haproxy.service
         sudo systemctl enable keepalived.service
         ```
 
-     5. Check to see if you can connect to the virtual IP address assigned by `keepalived if you get a connection refused that is fine because the Kubernetes api server is not yet running. But if you get a timeout error, then check your config. 
+     6. Check to see if you can connect to the virtual IP address assigned by `keepalived if you get a connection refused that is fine because the Kubernetes api server is not yet running. But if you get a timeout error, then check your config. 
         
         `nc -v {VirtualIP} {PORT}`
 
@@ -196,7 +217,7 @@ This homelab uses a Multi-Master stacked topology.
 
      2. Disable Swap on all nodes
 
-        `swapoff -a; sed -i '/swap/d' /etc/fstab`  
+        `sudo swapoff -a; sudo sed -i '/swap/d' /etc/fstab`  
 
      3. Make sure IPTables can see bridged Traffic on all nodes
 
@@ -212,14 +233,38 @@ This homelab uses a Multi-Master stacked topology.
         sudo sysctl --system
         ``` 
     
-     4. Install Docker engine on all the nodes and mark the packages as "held back"
+     4. Install Docker engine on all the nodes and mark the packages as "held back".
 
         [Docker Install](https://docs.docker.com/engine/install/)
 
         
         `sudo apt-mark hold docker-ce docker-ce-cli`
+        
+     5. Set Docker to use `systemd` as the control group driver. 
 
-     5. Install `Kubeadm`, `Kubelet`, and `kubectl` 
+        ```
+        sudo mkdir /etc/docker
+        cat <<EOF | sudo tee /etc/docker/daemon.json
+        {
+          "exec-opts": ["native.cgroupdriver=systemd"],
+          "log-driver": "json-file",
+          "log-opts": {
+            "max-size": "100m"
+        },
+        "storage-driver": "overlay2"
+        }
+        EOF
+        ```
+        Then Restart Docker and enable on boot.
+        
+        ```
+        sudo systemctl enable docker
+        sudo systemctl daemon-reload
+        sudo systemctl restart docker
+        ```
+        
+
+     6. Install `Kubeadm`, `Kubelet`, and `kubectl` 
 
         ```
         sudo apt-get update
@@ -236,21 +281,89 @@ This homelab uses a Multi-Master stacked topology.
         ```
   9. Intiliaze the first control plane on the cluster and copy the contents of the output to a text file for later use.
 
-     `sudo kubeadm init --control-plane-endpoint "LOAD_BALANCER_DNS:LOAD_BALANCER_PORT" --upload-certs --pod-network-cidr 192.168.0.0/16`
+     `sudo kubeadm init --control-plane-endpoint "${LOAD_BALANCER_VIP}:${LOAD_BALANCER_PORT}" --upload-certs --pod-network-cidr 192.168.0.0/16`
+     
+      <hr>
+      
+      * ${LOAD_BALANCER_VIP} - This is the Virtual IP address of `keepalived` assigned above.
+      * ${LOAD_BALANCER_PORT} - This is the API Server port assigned above (`6443`).
 
- 10. Join the other two control planes and then join the worker nodes with the commands provided by the output, and also make sure you copy the clusters kube config using the commands
 
- 11. Apply the CNI for your cluster 
+
+
+     ```
+     Your Kubernetes control-plane has initialized successfully!
+
+     To start using your cluster, you need to run the following as a regular user:
+
+     mkdir -p $HOME/.kube
+     sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+     sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+     Alternatively, if you are the root user, you can run:
+
+     export KUBECONFIG=/etc/kubernetes/admin.conf
+
+     You should now deploy a pod network to the cluster.
+     Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+     https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+     You can now join any number of the control-plane node running the following command on each as root:
+
+     kubeadm join ${LOAD_BALANCER_IP}:${LOAD_BALANCER_PORT} --token <token> \
+	   --discovery-token-ca-cert-hash <discovery-token> \
+	   --control-plane --certificate-key <certificate key>
+
+     Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
+     As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use
+     "kubeadm init phase upload-certs --upload-certs" to reload certs afterward.
+
+     Then you can join any number of worker nodes by running the following on each as root:
+
+     kubeadm join ${LOAD_BALANCER_IP}:${LOAD_BALANCER_PORT} --token <token> \
+	   --discovery-token-ca-cert-hash <discovery-token> 
+     ```
+     
+     
+     
+     > This is the output fromt he Kubeadm init command. Copy this to a text file for later use. 
+     
+     <h3>Do not Install your CNI to the cluster yet. I've tried this multiple times and it seems to not let the other nodes join the cluster. If it works for you, great. For me, I had to wait until the whole cluster is bootstrapped before applying the CNI. (Shown in a later step)</h3>
+
+ 10. Using the first three lines copy the clusters new `~/.kube/config` to the first control plane's home directory for access 
+     ```     
+     mkdir -p $HOME/.kube
+     sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+     sudo chown $(id -u):$(id -g) $HOME/.kube/config
+     ```
+     
+
+ 11. Join the other two control planes with the first kubeadm command provided from the output. You will need to add `sudo` to these commands, it doesn't work without it. 
+
+     ```
+     sudo kubeadm join ${LOAD_BALANCER_IP}:${LOAD_BALANCER_PORT} --token <token> \
+	   --discovery-token-ca-cert-hash <discovery-token> \
+	   --control-plane --certificate-key <certificate key>
+     ```
+
+ 12. Join the worker nodes and storage nodes with the second kubeadm command provided by the output. You will need to add `sudo` to these commands, it doesn't work without it.
+
+     ```
+     kubeadm join ${LOAD_BALANCER_IP}:${LOAD_BALANCER_PORT} --token <token> \
+	   --discovery-token-ca-cert-hash <discovery-token> 
+     ```
+
+ 12. Apply the CNI (Container Network Interface) for your cluster. 
 
      `kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml`
 
- 12. Copy your kube config to your local machine from the original control plane.
+ 13. Copy your kube config to your local machine from the original control plane.
 
      `sudo cat ~/.kube/config`
 
- 13. You should now have a fully working kubernetes cluster, things to consider are downloading `metallb`, `rancher`, and `longhorn` to make your cluster a little more user friendly.  These Guides can be found from [TechnoTim](https://techno-tim.github.io/)
+ 14. You should now have a fully working kubernetes cluster, things to consider are downloading `metallb`, `rancher`, and `longhorn` to make your cluster a little more user friendly.  These Guides can be found from [TechnoTim](https://techno-tim.github.io/)
 
- 14. If you are going to install Rancher on this cluster, I noticed that the schedular and conroller manager said "unhealthy". They seem to work as normal, but a fix for this is as follows:
+ 15. If you are going to install Rancher on this cluster, I noticed that the schedular and conroller manager said "unhealthy". They seem to work as normal, but a fix for this is as follows:
      1. `sudo nano /etc/kubernetes/manifest/kube-scheduler.yaml` and clear the line (spec->containers->command) containing this phrase: `- --port=0`
      2. `sudo nano /etc/kubernetes/manifest/kube-controller.yaml` and clear the line (spec->containers->command) containing this phrase: `- --port=0`
      3. `sudo systemctl restart kubelet.service`
